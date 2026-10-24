@@ -112,6 +112,7 @@ class _NocHubScreenState extends ConsumerState<NocHubScreen> {
                             icon: const Icon(Icons.clear),
                             onPressed: () {
                               _searchController.clear();
+                              setState(() {});
                               _loadDocuments();
                             },
                           )
@@ -122,6 +123,7 @@ class _NocHubScreenState extends ConsumerState<NocHubScreen> {
                     ),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
+                  onChanged: (_) => setState(() {}),
                   onSubmitted: (_) => _loadDocuments(),
                 ),
                 const SizedBox(height: 12),

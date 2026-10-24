@@ -18,8 +18,15 @@ class LeadsListScreen extends ConsumerStatefulWidget {
 }
 
 class _LeadsListScreenState extends ConsumerState<LeadsListScreen> {
+  final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _selectedStatus = 'All';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -441,11 +448,21 @@ class _LeadsListScreenState extends ConsumerState<LeadsListScreen> {
       child: Column(
         children: [
           TextField(
+            controller: _searchController,
             style: const TextStyle(color: AppColors.textPrimary),
             decoration: InputDecoration(
               hintText: 'Search by prospect, product, phone...',
               hintStyle: const TextStyle(color: AppColors.textSecondary),
               prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18, color: AppColors.textSecondary),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                  : null,
               filled: true,
               fillColor: AppColors.background,
               border: OutlineInputBorder(

@@ -17,6 +17,7 @@ import '../../pipelines/providers/pipelines_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/models/user_role.dart';
 import '../../../core/services/pdf_service.dart';
+import '../../../core/services/notification_backend_helper.dart';
 import '../../../core/widgets/pdf_preview_screen.dart';
 import '../../../core/router/app_router.dart';
 
@@ -368,15 +369,22 @@ class _FactoryOrderScreenState extends ConsumerState<FactoryOrderScreen> {
         await supabase.from('sales_pipelines').update(
             {'current_step': 'purchase_order'}).eq('id', widget.pipelineId);
 
+        final customerName = _pipeline?.customer?.companyName ?? '';
+        final productName = _pipeline?.product?.name ?? 'product';
+        final custSuffix = customerName.isNotEmpty ? ' (Customer: $customerName)' : '';
+
         // Notify sales executive who created the pipeline
-        await supabase.from('notifications').insert({
-          'user_id': _pipeline!.createdBy,
-          'title': 'Factory Order Completed',
-          'body':
-              'The factory order for ${_pipeline?.product?.name ?? "product"} has been completed by the factory team.',
-          'type': 'step_unlocked',
-          'related_pipeline_id': widget.pipelineId,
-        });
+        if (_pipeline?.createdBy != null && _pipeline!.createdBy.isNotEmpty) {
+          await NotificationBackendHelper.notifyUser(
+            supabase: supabase,
+            userId: _pipeline!.createdBy,
+            title: 'Factory Order Completed',
+            body:
+                'The factory order for $productName$custSuffix has been completed by the factory team.',
+            type: 'step_unlocked',
+            relatedPipelineId: widget.pipelineId,
+          );
+        }
 
         // Notify admin team
         final adminUsers = await supabase
@@ -385,18 +393,24 @@ class _FactoryOrderScreenState extends ConsumerState<FactoryOrderScreen> {
             .eq('role', 'admin')
             .eq('is_active', true);
 
+        final Set<String> adminIds = {};
         for (final u in (adminUsers as List<dynamic>)) {
-          final adminId = (u as Map)['id'];
-          if (adminId != _pipeline!.createdBy) {
-            await supabase.from('notifications').insert({
-              'user_id': adminId,
-              'title': 'Factory Order Completed',
-              'body':
-                  'The factory order for ${_pipeline?.product?.name ?? "product"} has been completed.',
-              'type': 'step_unlocked',
-              'related_pipeline_id': widget.pipelineId,
-            });
+          final adminId = (u as Map)['id']?.toString();
+          if (adminId != null && adminId.isNotEmpty && adminId != _pipeline?.createdBy) {
+            adminIds.add(adminId);
           }
+        }
+
+        for (final adminId in adminIds) {
+          await NotificationBackendHelper.notifyUser(
+            supabase: supabase,
+            userId: adminId,
+            title: 'Factory Order Completed',
+            body:
+                'The factory order for $productName$custSuffix has been completed.',
+            type: 'step_unlocked',
+            relatedPipelineId: widget.pipelineId,
+          );
         }
 
         // Notify purchase team
@@ -406,15 +420,24 @@ class _FactoryOrderScreenState extends ConsumerState<FactoryOrderScreen> {
             .eq('role', 'purchase')
             .eq('is_active', true);
 
+        final Set<String> purchaseIds = {};
         for (final u in (purchaseUsers as List<dynamic>)) {
-          await supabase.from('notifications').insert({
-            'user_id': (u as Map)['id'],
-            'title': 'New Material Requisition Assigned',
-            'body':
-                'Factory order completed. Material Requisition step is now available.',
-            'type': 'step_unlocked',
-            'related_pipeline_id': widget.pipelineId,
-          });
+          final pId = (u as Map)['id']?.toString();
+          if (pId != null && pId.isNotEmpty) {
+            purchaseIds.add(pId);
+          }
+        }
+
+        for (final pId in purchaseIds) {
+          await NotificationBackendHelper.notifyUser(
+            supabase: supabase,
+            userId: pId,
+            title: 'New Material Requisition Assigned',
+            body:
+                'Factory order completed$custSuffix. Material Requisition step is now available.',
+            type: 'step_unlocked',
+            relatedPipelineId: widget.pipelineId,
+          );
         }
 
         // Audit log
@@ -1198,9 +1221,20 @@ class _FactoryOrderScreenState extends ConsumerState<FactoryOrderScreen> {
                   const SizedBox(height: 8),
                   TextField(
                     controller: searchController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: 'Search catalog items...',
-                      prefixIcon: Icon(Icons.search),
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                searchController.clear();
+                                setModalState(() {
+                                  searchText = '';
+                                });
+                              },
+                            )
+                          : null,
                     ),
                     onChanged: (val) {
                       setModalState(() {

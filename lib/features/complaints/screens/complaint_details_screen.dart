@@ -339,6 +339,7 @@ class _ComplaintDetailsScreenState extends ConsumerState<ComplaintDetailsScreen>
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
         String searchQuery = '';
+        final searchCtrl = TextEditingController();
         return StatefulBuilder(
           builder: (ctx, setModalState) {
             final filteredTechs = technicians.where((t) {
@@ -371,9 +372,19 @@ class _ComplaintDetailsScreenState extends ConsumerState<ComplaintDetailsScreen>
                   ),
                   const SizedBox(height: 8),
                   TextField(
+                    controller: searchCtrl,
                     decoration: InputDecoration(
                       hintText: 'Search technician by name or phone...',
                       prefixIcon: const Icon(Icons.search),
+                      suffixIcon: searchCtrl.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                searchCtrl.clear();
+                                setModalState(() => searchQuery = '');
+                              },
+                            )
+                          : null,
                       filled: true,
                       fillColor: const Color(0xFFF8FAFC),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

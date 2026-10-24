@@ -14,6 +14,7 @@ import '../config/quote_type.dart';
 import '../services/qg_item_parser.dart';
 import '../services/price_calculator.dart';
 import '../services/qg_payment_sentence_builder.dart';
+import '../services/qg_model_specs_resolver.dart';
 
 /// Represents the in-memory and locally persisted draft of a Heat Pump Proposal.
 /// Encapsulates all salesperson edits, item resolutions, specifications,
@@ -172,56 +173,101 @@ class QgProposalDraft {
     String? initialSpecsCopiedFrom,
   }) {
     // 1. Parse line items
-    final parsedItems = q.lineItems.map((raw) {
+    final parsedItems = q.lineItems.map<ParsedItemResult>((raw) {
       final desc = raw['description']?.toString() ?? '';
       final qty = (raw['qty'] as num?)?.toInt() ?? 1;
       final rate = (raw['unit_price'] as num?)?.toDouble() ?? 0.0;
       final amt = (raw['total'] as num?)?.toDouble() ?? 0.0;
-      return QgItemParser.parseLineItem(desc, qty: qty, rate: rate, amount: amt);
+      final modelId = raw['model_id']?.toString() ?? raw['modelId']?.toString();
+      return QgItemParser.parseLineItem(desc, qty: qty, rate: rate, amount: amt, modelId: modelId);
     }).toList();
 
-    // 2. Identify largest Heat Pump line
-    int highestKw = 8;
-    String derivedHpModel = 'IZ-8C';
-    bool foundHp = false;
+    // 2. Classify items and identify primary Heat Pump line by type
+    ParsedItemResult? primaryAioItem;
+    ParsedItemResult? primaryPoolItem;
+    ParsedItemResult? primaryHpItem;
+    int? highestHpKw;
+    String? derivedHpModel;
+    String? derivedHpModelId;
 
     for (final it in parsedItems) {
-      if (it.type == ParsedItemType.heatPump && it.hpKw != null) {
-        foundHp = true;
-        if (it.hpKw! > highestKw || !foundHp) {
-          highestKw = it.hpKw!;
+      if (it.type == ParsedItemType.allInOne || it.type == ParsedItemType.wallMounted) {
+        primaryAioItem ??= it;
+      } else if (it.type == ParsedItemType.pool) {
+        primaryPoolItem ??= it;
+      } else if (it.type == ParsedItemType.heatPump) {
+        if (it.hpKw != null && (highestHpKw == null || it.hpKw! > highestHpKw)) {
+          highestHpKw = it.hpKw!;
           derivedHpModel = it.hpModel ?? 'IZ-${it.hpKw}C';
+          derivedHpModelId = it.modelId;
+          primaryHpItem = it;
+        } else if (primaryHpItem == null) {
+          primaryHpItem = it;
         }
       }
     }
 
-    // 3. Category from kW
-    String catId = 'hp_4_8';
-    if (highestKw <= 8) {
-      catId = 'hp_4_8';
-    } else if (highestKw <= 24) {
-      catId = 'hp_9_24';
-    } else if (highestKw <= 100) {
-      catId = 'hp_38_100';
+    String catId;
+    String effectiveHpModel;
+    int effectiveHpKw;
+    ResolvedModelSpecs resolvedSpecsResult;
+
+    if (primaryAioItem != null) {
+      final isWall = primaryAioItem.type == ParsedItemType.wallMounted;
+      catId = isWall ? 'wall_mounted' : 'all_in_one';
+      final capLitres = primaryAioItem.aioCapacityLitres ?? (isWall ? 100 : 200);
+      effectiveHpModel = primaryAioItem.hpModel ?? (isWall ? 'IZ-${capLitres}WM' : 'IZ-${capLitres}A');
+      effectiveHpKw = 0;
+
+      resolvedSpecsResult = QgModelSpecsResolver.resolve(
+        modelId: primaryAioItem.modelId,
+        modelName: effectiveHpModel,
+        litres: capLitres,
+        isWallMounted: isWall,
+        heatPumpType: HeatPumpType.allInOne,
+        settings: settings,
+        rawDescription: primaryAioItem.rawDescription,
+      );
+    } else if (primaryPoolItem != null) {
+      catId = 'pool';
+      final poolKw = primaryPoolItem.poolKw ?? 35;
+      effectiveHpModel = primaryPoolItem.poolModel ?? 'IZ-${poolKw}SP';
+      effectiveHpKw = poolKw;
+
+      resolvedSpecsResult = QgModelSpecsResolver.resolve(
+        modelId: primaryPoolItem.modelId,
+        modelName: effectiveHpModel,
+        kw: poolKw.toDouble(),
+        heatPumpType: HeatPumpType.swimmingPool,
+        settings: settings,
+        rawDescription: primaryPoolItem.rawDescription,
+      );
     } else {
-      catId = 'other';
-    }
+      // Domestic / Commercial Air Source Heat Pump
+      effectiveHpKw = highestHpKw ?? 4;
+      effectiveHpModel = derivedHpModel ?? 'IZ-${effectiveHpKw}C';
 
-    // Check if AllInOne or Pool
-    for (final it in parsedItems) {
-      if (it.type == ParsedItemType.allInOne) {
-        catId = 'all_in_one';
-        break;
-      } else if (it.type == ParsedItemType.wallMounted) {
-        catId = 'wall_mounted';
-        break;
-      } else if (it.type == ParsedItemType.pool) {
-        catId = 'pool';
-        break;
+      if (effectiveHpKw <= 8) {
+        catId = 'hp_4_8';
+      } else if (effectiveHpKw <= 24) {
+        catId = 'hp_9_24';
+      } else if (effectiveHpKw <= 100) {
+        catId = 'hp_38_100';
+      } else {
+        catId = 'other';
       }
+
+      resolvedSpecsResult = QgModelSpecsResolver.resolve(
+        modelId: derivedHpModelId,
+        modelName: effectiveHpModel,
+        kw: effectiveHpKw.toDouble(),
+        heatPumpType: HeatPumpType.domesticCommercial,
+        settings: settings,
+        rawDescription: primaryHpItem?.rawDescription,
+      );
     }
 
-    // 4. Identify Tank line
+    // 4. Identify Tank line (not applicable for All-In-One which has internal tank)
     bool hasTankLine = false;
     int tankLitres = 500;
     int tankQty = 1;
@@ -229,44 +275,23 @@ class QgProposalDraft {
     bool isPressurized = true;
     double tankRate = 0.0;
 
-    for (final it in parsedItems) {
-      if (it.type == ParsedItemType.tank) {
-        hasTankLine = true;
-        tankLitres = it.tankCapacityLitres ?? 500;
-        tankQty = it.qty;
-        tankMat = it.tankMaterial ?? 'GI';
-        isPressurized = it.isPressurized;
-        tankRate = it.rate;
-        break;
+    if (primaryAioItem == null) {
+      for (final it in parsedItems) {
+        if (it.type == ParsedItemType.tank) {
+          hasTankLine = true;
+          tankLitres = it.tankCapacityLitres ?? 500;
+          tankQty = it.qty;
+          tankMat = it.tankMaterial ?? 'GI';
+          isPressurized = it.isPressurized;
+          tankRate = it.rate;
+          break;
+        }
       }
     }
 
-    // 5. HP specs from Module Settings, or initialHpSpecs, or explicit fallback
-    Map<String, String>? specsFromSettings;
-    String? specsCopiedSource = initialSpecsCopiedFrom;
-
-    if (settings != null && settings.models.isNotEmpty) {
-      final matchedHp = settings.models.cast<HeatPumpModel?>().firstWhere(
-        (m) =>
-            m != null &&
-            (m.id.toLowerCase() == derivedHpModel.toLowerCase() ||
-                m.modelName.toLowerCase() == derivedHpModel.toLowerCase() ||
-                (m.displayCapacityKw - highestKw).abs() < 0.1),
-        orElse: () => null,
-      );
-      if (matchedHp != null && matchedHp.specs.isNotEmpty) {
-        specsFromSettings = Map<String, String>.from(matchedHp.specs);
-        specsCopiedSource ??= 'Module Settings: ${matchedHp.modelName}';
-      }
-    }
-
-    final defaultSpecs = initialHpSpecs ??
-        specsFromSettings ??
-        (() {
-          debugPrint(
-              '[QuotationGenerator] Using fallback default specs for $derivedHpModel (${highestKw}kW) - no Module Settings found');
-          return _buildDefaultHpSpecs(highestKw, derivedHpModel);
-        })();
+    // 5. HP specs from centralized resolver
+    final defaultSpecs = initialHpSpecs ?? resolvedSpecsResult.specs;
+    final specsCopiedSource = initialSpecsCopiedFrom ?? resolvedSpecsResult.specsCopiedFrom;
 
     // 6. Tank specifications
     final defaultTankSpecs = _buildDefaultTankSpecs(
@@ -336,8 +361,8 @@ class QgProposalDraft {
       grandTotal: q.grandTotal,
       reconciliationWarning: reconWarn,
       specCategoryId: initialSpecCategory ?? catId,
-      hpModel: derivedHpModel,
-      hpKw: highestKw,
+      hpModel: resolvedSpecsResult.modelName.isNotEmpty ? resolvedSpecsResult.modelName : effectiveHpModel,
+      hpKw: effectiveHpKw,
       hpSpecs: defaultSpecs,
       specsCopiedFrom: specsCopiedSource,
       hasTank: hasTankLine,
@@ -356,25 +381,6 @@ class QgProposalDraft {
     );
   }
 
-  static Map<String, String> _buildDefaultHpSpecs(int kw, String model) {
-    final powerSupply = kw <= 8 ? '220V - 1Phase' : '415V - 3Phase';
-    final compressor = kw <= 24 ? 'Single' : 'Double';
-    return {
-      'Heat Pump Model': model,
-      'Size (W x D x H) mm': '1410x748x1000mm',
-      'Rated Heating Capacity': '${kw}kw',
-      'Power Supply': powerSupply,
-      'Rated Input Power': '${(kw * 0.23).toStringAsFixed(2)}kw',
-      'Rated COP': '4.29',
-      'Rated Water Yield': '${(kw * 21.5).round()} L/h',
-      'Max Outlet Water Temperature': '60°C',
-      'Water Flow Noise': '<=57dB(A)',
-      'Condenser': 'Shell and tube heat exchanger',
-      'Refrigerant': 'R134A/410A',
-      'Operating ambient Temp': '-15~43°C',
-      'Compressor': compressor,
-    };
-  }
 
   static Map<String, String> _buildDefaultTankSpecs({
     required String material,
@@ -528,89 +534,163 @@ class QgProposalDraft {
 
   /// Converts this draft to a GeneratorQuotation instance for rendering with PdfQuotationBuilder
   GeneratorQuotation toGeneratorQuotation({GeneratorCompanySettings? settings}) {
-    HeatPumpModel heatPumpModel = HeatPumpModel(
-      id: hpModel,
-      modelName: hpModel,
-      displayCapacityKw: hpKw.toDouble(),
-      ratedHeatingCapacity: '${hpKw}kw',
-      descriptionLine: 'Air Source Heat pump ${hpKw}kw',
-      makeModelLine: 'Make: IZYHEAT Heat Pump Model: $hpModel ${hpKw}kw',
-      powerInputText: hpSpecs['Power Supply'] ?? '',
-      defaultImagePath: 'assets/images/model_iz_4c.png',
-      specs: Map<String, String>.from(hpSpecs),
-    );
-    if (settings != null && settings.models.isNotEmpty) {
-      final matchedHp = settings.models.cast<HeatPumpModel?>().firstWhere(
-        (m) => m != null && (m.id.toLowerCase() == hpModel.toLowerCase() || m.modelName.toLowerCase() == hpModel.toLowerCase() || (m.displayCapacityKw - hpKw).abs() < 0.1),
-        orElse: () => null,
-      );
-      if (matchedHp != null) {
-        final resolvedSpecs = matchedHp.specs.isNotEmpty
-            ? Map<String, String>.from(matchedHp.specs)
-            : (hpSpecs.isNotEmpty
-                ? Map<String, String>.from(hpSpecs)
-                : (() {
-                    debugPrint('[QuotationGenerator] Using fallback default specs for $hpModel (${hpKw}kW) - no Module Settings found');
-                    return _buildDefaultHpSpecs(hpKw, hpModel);
-                  })());
-        heatPumpModel = matchedHp.copyWith(
-          displayCapacityKw: hpKw > 0 ? hpKw.toDouble() : matchedHp.displayCapacityKw,
-          specs: resolvedSpecs,
-        );
-      }
+    final bool isAllInOne = specCategoryId == 'all_in_one' ||
+        items.any((it) => it.type == ParsedItemType.allInOne);
+    final bool isWallMounted = specCategoryId == 'wall_mounted' ||
+        items.any((it) => it.type == ParsedItemType.wallMounted);
+    final bool isPool = specCategoryId == 'pool' ||
+        items.any((it) => it.type == ParsedItemType.pool);
+
+    QuoteType resolvedQuoteType;
+    if (isAllInOne) {
+      resolvedQuoteType = QuoteType.allInOneFloor;
+    } else if (isWallMounted) {
+      resolvedQuoteType = QuoteType.allInOneWall;
+    } else if (isPool) {
+      resolvedQuoteType = QuoteType.swimmingPool;
+    } else if (hasTank) {
+      resolvedQuoteType = QuoteType.hpWithTank;
+    } else {
+      resolvedQuoteType = QuoteType.hpOnly;
     }
 
-    // Multi Heat Pump Lines
+    AllInOneModel? resolvedAioModel;
+    PoolHeatPumpModel? resolvedPoolModel;
+    HeatPumpModel heatPumpModel;
     final hpLineItems = <HeatPumpLineItem>[];
-    int hpItemIdx = 1;
-    for (int i = 0; i < items.length; i++) {
-      final it = items[i];
+
+    int hpRateVal = 0;
+    int hpQtyVal = 1;
+    for (final it in items) {
       if (it.type == ParsedItemType.heatPump || it.type == ParsedItemType.allInOne || it.type == ParsedItemType.pool) {
-        final kwVal = it.hpKw?.toDouble() ?? hpKw.toDouble();
-        final model = it.hpModel ?? hpModel;
-        Map<String, String>? modelSpecsFromSettings;
-        if (settings != null) {
-          final matched = settings.models.cast<HeatPumpModel?>().firstWhere(
-            (m) => m != null && (m.id.toLowerCase() == model.toLowerCase() || m.modelName.toLowerCase() == model.toLowerCase() || (m.displayCapacityKw - kwVal).abs() < 0.1),
-            orElse: () => null,
+        hpRateVal = it.rate.round();
+        hpQtyVal = it.qty;
+        break;
+      }
+    }
+    if (hpRateVal == 0 && !hasTank) {
+      hpRateVal = subtotal.round();
+    }
+
+    if (isAllInOne || isWallMounted) {
+      final aioItem = items.firstWhere(
+        (it) => it.type == ParsedItemType.allInOne || it.type == ParsedItemType.wallMounted,
+        orElse: () => items.isNotEmpty ? items.first : ParsedItemResult(rawDescription: 'All in one 200Ltr', type: ParsedItemType.allInOne, status: ItemResolveStatus.resolved, aioCapacityLitres: 200),
+      );
+      final cap = aioItem.aioCapacityLitres ?? 200;
+
+      final aioRes = QgModelSpecsResolver.resolve(
+        modelId: aioItem.modelId,
+        modelName: aioItem.hpModel ?? hpModel,
+        litres: cap,
+        isWallMounted: isWallMounted,
+        heatPumpType: HeatPumpType.allInOne,
+        settings: settings,
+        rawDescription: aioItem.rawDescription,
+      );
+
+      final effectiveAioSpecs = (hpSpecs.isNotEmpty && (specCategoryId == 'all_in_one' || specCategoryId == 'wall_mounted'))
+          ? Map<String, String>.from(hpSpecs)
+          : aioRes.specs;
+
+      resolvedAioModel = aioRes.matchedAioModel?.copyWith(specs: effectiveAioSpecs) ?? AllInOneModel(
+        id: aioRes.modelId,
+        modelName: aioRes.modelName,
+        mountType: isWallMounted ? 'wall' : 'floor',
+        tankVolumeLitres: aioRes.litres ?? cap,
+        description: 'Make: IZYHEAT All in one Heat pump\nModel: ${aioRes.modelName}\nCapacity: ${aioRes.litres ?? cap} Ltr',
+        specs: effectiveAioSpecs,
+      );
+
+      heatPumpModel = HeatPumpModel(
+        id: resolvedAioModel.id,
+        modelName: resolvedAioModel.modelName,
+        displayCapacityKw: 0,
+        specs: effectiveAioSpecs,
+      );
+    } else if (isPool) {
+      final poolRes = QgModelSpecsResolver.resolve(
+        modelName: hpModel,
+        kw: hpKw.toDouble(),
+        heatPumpType: HeatPumpType.swimmingPool,
+        settings: settings,
+      );
+
+      final effectivePoolSpecs = hpSpecs.isNotEmpty ? Map<String, String>.from(hpSpecs) : poolRes.specs;
+      resolvedPoolModel = poolRes.matchedPoolModel?.copyWith(specs: effectivePoolSpecs) ?? PoolHeatPumpModel.defaultModel().copyWith(
+        modelName: poolRes.modelName,
+        capacityKw: poolRes.kw,
+        specs: effectivePoolSpecs,
+      );
+
+      heatPumpModel = HeatPumpModel(
+        id: resolvedPoolModel.id,
+        modelName: resolvedPoolModel.modelName,
+        displayCapacityKw: resolvedPoolModel.capacityKw,
+        specs: effectivePoolSpecs,
+      );
+    } else {
+      // Domestic / Commercial Air Source Heat Pump
+      final singleResolved = QgModelSpecsResolver.resolve(
+        modelName: hpModel,
+        kw: hpKw.toDouble(),
+        heatPumpType: HeatPumpType.domesticCommercial,
+        settings: settings,
+      );
+
+      final effectiveSpecs = hpSpecs.isNotEmpty ? Map<String, String>.from(hpSpecs) : singleResolved.specs;
+
+      heatPumpModel = HeatPumpModel(
+        id: singleResolved.matchedModel?.id ?? singleResolved.modelName,
+        modelName: singleResolved.modelName,
+        displayCapacityKw: singleResolved.kw,
+        ratedHeatingCapacity: '${singleResolved.kw.toInt() == singleResolved.kw ? singleResolved.kw.toInt() : singleResolved.kw}kw',
+        descriptionLine: 'Air Source Heat pump ${singleResolved.kw.toInt() == singleResolved.kw ? singleResolved.kw.toInt() : singleResolved.kw}kw',
+        makeModelLine: 'Make: IZYHEAT Heat Pump Model: ${singleResolved.modelName} ${singleResolved.kw.toInt() == singleResolved.kw ? singleResolved.kw.toInt() : singleResolved.kw}kw',
+        powerInputText: effectiveSpecs['Power Supply'] ?? '',
+        defaultImagePath: singleResolved.matchedModel?.defaultImagePath ?? 'assets/images/model_iz_4c.png',
+        specs: effectiveSpecs,
+      );
+
+      int hpItemIdx = 1;
+      for (int i = 0; i < items.length; i++) {
+        final it = items[i];
+        if (it.type == ParsedItemType.heatPump) {
+          final kwVal = it.hpKw?.toDouble() ?? hpKw.toDouble();
+          final model = it.hpModel ?? hpModel;
+
+          final itemResolved = QgModelSpecsResolver.resolve(
+            modelId: it.modelId,
+            modelName: model,
+            kw: kwVal,
+            heatPumpType: HeatPumpType.domesticCommercial,
+            settings: settings,
+            rawDescription: it.rawDescription,
           );
-          if (matched != null && matched.specs.isNotEmpty) {
-            modelSpecsFromSettings = Map<String, String>.from(matched.specs);
-          } else {
-            final aioMatched = settings.allInOneModels.cast<AllInOneModel?>().firstWhere(
-              (m) => m != null && (m.id.toLowerCase() == model.toLowerCase() || m.modelName.toLowerCase() == model.toLowerCase()),
-              orElse: () => null,
-            );
-            if (aioMatched != null && aioMatched.specs.isNotEmpty) {
-              modelSpecsFromSettings = Map<String, String>.from(aioMatched.specs);
-            } else {
-              final poolMatched = settings.poolModels.cast<PoolHeatPumpModel?>().firstWhere(
-                (m) => m != null && (m.id.toLowerCase() == model.toLowerCase() || m.modelName.toLowerCase() == model.toLowerCase()),
-                orElse: () => null,
-              );
-              if (poolMatched != null && poolMatched.specs.isNotEmpty) {
-                modelSpecsFromSettings = Map<String, String>.from(poolMatched.specs);
-              }
-            }
-          }
+
+          hpLineItems.add(HeatPumpLineItem(
+            id: it.modelId ?? 'hp_${hpItemIdx++}',
+            modelName: itemResolved.modelName,
+            kw: itemResolved.kw,
+            qty: it.qty,
+            rate: it.rate.round(),
+            amount: it.amount.round(),
+            description: it.rawDescription,
+            specs: itemResolved.specs,
+            model: itemResolved.matchedModel,
+          ));
         }
-        final specs = (modelSpecsFromSettings != null && modelSpecsFromSettings.isNotEmpty)
-            ? modelSpecsFromSettings
-            : ((model == hpModel && hpSpecs.isNotEmpty)
-                ? hpSpecs
-                : (() {
-                    debugPrint('[QuotationGenerator] Using fallback default specs for line item $model (${kwVal}kW) - no Module Settings found');
-                    return _buildDefaultHpSpecs(kwVal.toInt(), model);
-                  })());
+      }
+
+      if (hpLineItems.isEmpty) {
         hpLineItems.add(HeatPumpLineItem(
-          id: 'hp_${hpItemIdx++}',
-          modelName: model,
-          kw: kwVal,
-          qty: it.qty,
-          rate: it.rate.round(),
-          amount: it.amount.round(),
-          description: it.rawDescription,
-          specs: specs,
+          id: 'hp_1',
+          modelName: hpModel,
+          kw: hpKw.toDouble(),
+          qty: hpQtyVal,
+          rate: hpRateVal,
+          amount: hpRateVal * hpQtyVal,
+          specs: effectiveSpecs,
         ));
       }
     }
@@ -618,37 +698,39 @@ class QgProposalDraft {
     // Multi Tank Lines
     final tankLinesList = <TankLineItem>[];
     int tankIdx = 1;
-    for (final it in items) {
-      if (it.type == ParsedItemType.tank) {
-        final cap = it.tankCapacityLitres ?? tankCapacityLitres;
-        final mat = it.tankMaterial ?? tankMaterial;
-        final isPress = it.isPressurized;
-        final thick = (mat == 'Enamel') ? '2mm' : (mat == 'MS' ? '5mm' : '3mm');
+    if (!isAllInOne && !isWallMounted) {
+      for (final it in items) {
+        if (it.type == ParsedItemType.tank) {
+          final cap = it.tankCapacityLitres ?? tankCapacityLitres;
+          final mat = it.tankMaterial ?? tankMaterial;
+          final isPress = it.isPressurized;
+          final thick = (mat == 'Enamel') ? '2mm' : (mat == 'MS' ? '5mm' : '3mm');
+          tankLinesList.add(TankLineItem(
+            id: 'tank_${tankIdx++}',
+            capacityLitres: cap,
+            qty: it.qty,
+            isPressurized: isPress,
+            rate: it.rate.round(),
+            innerTankMaterial: mat,
+            innerTankThickness: thick,
+            outerCladdingMaterial: 'Galvanized Painted',
+            insulationMaterial: it.insulationType ?? tankInsulation,
+          ));
+        }
+      }
+      if (tankLinesList.isEmpty && hasTank) {
         tankLinesList.add(TankLineItem(
-          id: 'tank_${tankIdx++}',
-          capacityLitres: cap,
-          qty: it.qty,
-          isPressurized: isPress,
-          rate: it.rate.round(),
-          innerTankMaterial: mat,
-          innerTankThickness: thick,
+          id: 'tank_1',
+          capacityLitres: tankCapacityLitres,
+          qty: tankQty,
+          isPressurized: isTankPressurized,
+          rate: tankRate.round(),
+          innerTankMaterial: tankMaterial,
+          innerTankThickness: '3mm',
           outerCladdingMaterial: 'Galvanized Painted',
-          insulationMaterial: it.insulationType ?? tankInsulation,
+          insulationMaterial: (tankInsulation.toLowerCase().contains('puff') || tankInsulation.toLowerCase().contains('puf')) ? 'PUF' : tankInsulation,
         ));
       }
-    }
-    if (tankLinesList.isEmpty && hasTank) {
-      tankLinesList.add(TankLineItem(
-        id: 'tank_1',
-        capacityLitres: tankCapacityLitres,
-        qty: tankQty,
-        isPressurized: isTankPressurized,
-        rate: tankRate.round(),
-        innerTankMaterial: tankMaterial,
-        innerTankThickness: '3mm',
-        outerCladdingMaterial: 'Galvanized Painted',
-        insulationMaterial: (tankInsulation.toLowerCase().contains('puff') || tankInsulation.toLowerCase().contains('puf')) ? 'PUF' : tankInsulation,
-      ));
     }
 
     final mappedPriceRows = <PriceRow>[];
@@ -695,7 +777,6 @@ class QgProposalDraft {
         rowType = PriceRowType.included;
       }
 
-      // Requirement 6: "and don't display 'extra' text in price table"
       final desc = term;
 
       mappedExtraRows.add(PriceItem(
@@ -709,19 +790,6 @@ class QgProposalDraft {
       ));
     }
 
-    int hpRateVal = 0;
-    int hpQtyVal = 1;
-    for (final it in items) {
-      if (it.type == ParsedItemType.heatPump || it.type == ParsedItemType.allInOne) {
-        hpRateVal = it.rate.round();
-        hpQtyVal = it.qty;
-        break;
-      }
-    }
-    if (hpRateVal == 0 && !hasTank) {
-      hpRateVal = subtotal.round();
-    }
-
     DateTime parsedDate;
     try {
       final parts = quoteDate.split('/');
@@ -732,106 +800,6 @@ class QgProposalDraft {
       }
     } catch (_) {
       parsedDate = quotationUpdatedAt;
-    }
-
-    if (hpLineItems.isEmpty) {
-      hpLineItems.add(HeatPumpLineItem(
-        id: 'hp_1',
-        modelName: hpModel,
-        kw: hpKw.toDouble(),
-        qty: hpQtyVal,
-        rate: hpRateVal,
-        amount: hpRateVal * hpQtyVal,
-        specs: hpSpecs,
-      ));
-    }
-
-    final bool isAllInOne = specCategoryId == 'all_in_one' ||
-        items.any((it) => it.type == ParsedItemType.allInOne);
-    final bool isWallMounted = specCategoryId == 'wall_mounted' ||
-        items.any((it) => it.type == ParsedItemType.wallMounted);
-    final bool isPool = specCategoryId == 'pool' ||
-        items.any((it) => it.type == ParsedItemType.pool);
-
-    QuoteType resolvedQuoteType;
-    if (isAllInOne) {
-      resolvedQuoteType = QuoteType.allInOneFloor;
-    } else if (isWallMounted) {
-      resolvedQuoteType = QuoteType.allInOneWall;
-    } else if (isPool) {
-      resolvedQuoteType = QuoteType.swimmingPool;
-    } else if (hasTank || tankLinesList.isNotEmpty) {
-      resolvedQuoteType = QuoteType.hpWithTank;
-    } else {
-      resolvedQuoteType = QuoteType.hpOnly;
-    }
-
-    AllInOneModel? resolvedAioModel;
-    if (isAllInOne || isWallMounted) {
-      final aioItem = items.firstWhere(
-        (it) => it.type == ParsedItemType.allInOne || it.type == ParsedItemType.wallMounted,
-        orElse: () => items.isNotEmpty ? items.first : ParsedItemResult(rawDescription: 'All in one 200Ltr', type: ParsedItemType.allInOne, status: ItemResolveStatus.resolved, aioCapacityLitres: 200),
-      );
-      final cap = aioItem.aioCapacityLitres ?? 200;
-      final rawDescLower = aioItem.rawDescription.toLowerCase();
-
-      AllInOneModel? matchedModel;
-      if (settings != null && settings.allInOneModels.isNotEmpty) {
-        matchedModel = settings.allInOneModels.cast<AllInOneModel?>().firstWhere(
-          (m) =>
-              m != null &&
-              m.isWallMounted == isWallMounted &&
-              (m.tankVolumeLitres == cap ||
-                  rawDescLower.contains(m.modelName.toLowerCase()) ||
-                  rawDescLower.contains('${m.tankVolumeLitres}')),
-          orElse: () => null,
-        );
-      }
-
-      if (matchedModel != null) {
-        resolvedAioModel = matchedModel;
-      } else {
-        debugPrint(
-            '[QuotationGenerator] Using fallback default AllInOneModel ($cap Ltr) - no matching model in Module Settings');
-        resolvedAioModel = AllInOneModel(
-          id: 'IZ-${cap}A',
-          modelName: 'All in One ${cap}Ltr',
-          mountType: isWallMounted ? 'wall' : 'floor',
-          tankVolumeLitres: cap,
-          description: 'Make: IZYHEAT All in one Heat pump\nModel: All in one ${cap}Ltr\nCapacity: $cap Ltr\nPower Input: 850W, Output: 3.5KW, 220V/50Hz',
-          specs: {
-            'Product Dimension': cap <= 200 ? '570x1810mm' : '640x1920mm',
-            'Power Supply': '220V-240V/50Hz',
-            'Heating Rate / Water Yield': cap <= 200 ? '42 L/h' : '65 L/h',
-            'COP': '4.76',
-            'Compressor': 'PANASONIC',
-            'Refrigerant': 'R134a',
-            'Max Outlet Water Temp': '65°C',
-            'Ambient Temperature': '-7~45°C',
-            'Water Tank Material': 'Tank with enamel coating',
-            'Net Weight': cap <= 200 ? '93 KG' : '110 KG',
-          },
-        );
-      }
-    }
-
-    PoolHeatPumpModel? resolvedPoolModel;
-    if (isPool) {
-      if (settings != null && settings.poolModels.isNotEmpty) {
-        resolvedPoolModel = settings.poolModels.cast<PoolHeatPumpModel?>().firstWhere(
-          (m) =>
-              m != null &&
-              (m.id.toLowerCase() == hpModel.toLowerCase() ||
-                  m.modelName.toLowerCase() == hpModel.toLowerCase() ||
-                  (m.capacityKw - hpKw).abs() < 0.1),
-          orElse: () => settings.poolModels.first,
-        );
-      }
-      if (resolvedPoolModel == null) {
-        debugPrint(
-            '[QuotationGenerator] Using fallback PoolHeatPumpModel.defaultModel() - no pool models in Module Settings');
-        resolvedPoolModel = PoolHeatPumpModel.defaultModel();
-      }
     }
 
     int advSplit = 70;

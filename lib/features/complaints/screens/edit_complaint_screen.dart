@@ -157,6 +157,7 @@ class _EditComplaintScreenState extends ConsumerState<EditComplaintScreen> {
       ),
       builder: (ctx) {
         String filter = '';
+        final searchCtrl = TextEditingController();
         return StatefulBuilder(
           builder: (context, setModalState) {
             final filtered = products.where((p) {
@@ -195,11 +196,21 @@ class _EditComplaintScreenState extends ConsumerState<EditComplaintScreen> {
                     ),
                     const SizedBox(height: 8),
                     TextField(
+                      controller: searchCtrl,
                       autofocus: false,
                       onChanged: (val) => setModalState(() => filter = val.trim()),
                       decoration: InputDecoration(
                         hintText: 'Search products by name...',
                         prefixIcon: const Icon(Icons.search, color: Color(0xFF6D28D9)),
+                        suffixIcon: searchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  searchCtrl.clear();
+                                  setModalState(() => filter = '');
+                                },
+                              )
+                            : null,
                         filled: true,
                         fillColor: const Color(0xFFF8FAFC),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -276,6 +287,7 @@ class _EditComplaintScreenState extends ConsumerState<EditComplaintScreen> {
       ),
       builder: (ctx) {
         String filter = '';
+        final searchCtrl = TextEditingController();
         return StatefulBuilder(
           builder: (context, setModalState) {
             final filtered = errorCodes.where((ec) {
@@ -316,11 +328,21 @@ class _EditComplaintScreenState extends ConsumerState<EditComplaintScreen> {
                     ),
                     const SizedBox(height: 8),
                     TextField(
+                      controller: searchCtrl,
                       autofocus: false,
                       onChanged: (val) => setModalState(() => filter = val.trim()),
                       decoration: InputDecoration(
                         hintText: 'Search by code (e.g. E01) or description...',
                         prefixIcon: const Icon(Icons.search, color: Color(0xFF6D28D9)),
+                        suffixIcon: searchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  searchCtrl.clear();
+                                  setModalState(() => filter = '');
+                                },
+                              )
+                            : null,
                         filled: true,
                         fillColor: const Color(0xFFF8FAFC),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -424,6 +446,7 @@ class _EditComplaintScreenState extends ConsumerState<EditComplaintScreen> {
       ),
       builder: (ctx) {
         String filter = '';
+        final searchCtrl = TextEditingController();
         return StatefulBuilder(
           builder: (context, setModalState) {
             final filtered = technicians.where((t) {
@@ -464,11 +487,21 @@ class _EditComplaintScreenState extends ConsumerState<EditComplaintScreen> {
                     ),
                     const SizedBox(height: 8),
                     TextField(
+                      controller: searchCtrl,
                       autofocus: false,
                       onChanged: (val) => setModalState(() => filter = val.trim()),
                       decoration: InputDecoration(
                         hintText: 'Search technician by name or phone...',
                         prefixIcon: const Icon(Icons.search, color: Color(0xFF6D28D9)),
+                        suffixIcon: searchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  searchCtrl.clear();
+                                  setModalState(() => filter = '');
+                                },
+                              )
+                            : null,
                         filled: true,
                         fillColor: const Color(0xFFF8FAFC),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

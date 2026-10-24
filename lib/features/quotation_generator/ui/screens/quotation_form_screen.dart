@@ -20,6 +20,8 @@ import '../../models/tank_spec.dart';
 import '../../providers/quotation_generator_providers.dart';
 import '../../services/price_calculator.dart';
 import '../../services/quote_number_service.dart';
+import '../../services/qg_item_parser.dart';
+import '../../services/qg_model_specs_resolver.dart';
 import '../../../../core/models/customer.dart';
 import '../../../../core/providers/supabase_provider.dart';
 import '../../models/deal_quotation_option.dart';
@@ -382,17 +384,101 @@ class _QuotationGeneratorFormScreenState
           _priceRows = newRows;
         }
 
-        // Match Heat Pump models if any line item mentions capacity
+        // Match primary Heat Pump model for single model selection
         for (final row in newRows) {
-          final d = row.description.toLowerCase();
-          for (final m in settings.models) {
-            final mLower = m.modelName.toLowerCase();
-            final cap = '${m.displayCapacityKw.round()}kw';
-            if (d.contains(mLower) || d.contains(cap)) {
-              _selectedModel = m;
-              _hpQty = row.qty;
-              break;
+          final parsed = QgItemParser.parseLineItem(row.description);
+          if (parsed.type == ParsedItemType.allInOne || parsed.type == ParsedItemType.wallMounted) {
+            _quoteType = parsed.type == ParsedItemType.wallMounted
+                ? QuoteType.allInOneWall
+                : QuoteType.allInOneFloor;
+            final aioLitres = parsed.aioCapacityLitres ?? parsed.tankCapacityLitres;
+            final resolved = QgModelSpecsResolver.resolve(
+              modelName: parsed.modelId ?? parsed.hpModel,
+              litres: aioLitres,
+              settings: settings,
+              heatPumpType: HeatPumpType.allInOne,
+            );
+            final match = settings.allInOneModels.cast<AllInOneModel?>().firstWhere(
+              (m) =>
+                  m != null &&
+                  (m.id.toLowerCase() == resolved.modelId.toLowerCase() ||
+                      m.modelName.toLowerCase() == resolved.modelName.toLowerCase()),
+              orElse: () => null,
+            );
+            if (match != null) {
+              _selectedAllInOneModel = match;
+            } else {
+              _selectedAllInOneModel = AllInOneModel(
+                id: resolved.modelId.isNotEmpty ? resolved.modelId : resolved.modelName,
+                modelName: resolved.modelName,
+                mountType: parsed.type == ParsedItemType.wallMounted ? 'wall' : 'floor',
+                tankVolumeLitres: resolved.litres ?? aioLitres ?? 200,
+                description: 'Make: IZYHEAT All in one Heat pump\nModel: ${resolved.modelName}',
+                specs: resolved.specs,
+              );
             }
+            _hpQty = row.qty;
+            break;
+          } else if (parsed.type == ParsedItemType.pool) {
+            _quoteType = QuoteType.swimmingPool;
+            final resolved = QgModelSpecsResolver.resolve(
+              modelName: parsed.modelId ?? parsed.poolModel ?? parsed.hpModel,
+              kw: (parsed.poolKw ?? parsed.hpKw)?.toDouble(),
+              settings: settings,
+              heatPumpType: HeatPumpType.swimmingPool,
+            );
+            final match = settings.poolModels.cast<PoolHeatPumpModel?>().firstWhere(
+              (m) =>
+                  m != null &&
+                  (m.id.toLowerCase() == resolved.modelId.toLowerCase() ||
+                      m.modelName.toLowerCase() == resolved.modelName.toLowerCase()),
+              orElse: () => null,
+            );
+            if (match != null) {
+              _selectedPoolModel = match;
+            } else {
+              _selectedPoolModel = PoolHeatPumpModel(
+                id: resolved.modelId.isNotEmpty ? resolved.modelId : resolved.modelName,
+                modelName: resolved.modelName,
+                capacityKw: resolved.kw,
+                description: 'Make: IZYHEAT Swimming Pool Heat Pump\nModel: ${resolved.modelName}',
+                specs: resolved.specs,
+              );
+            }
+            _hpQty = row.qty;
+            break;
+          } else if (parsed.type == ParsedItemType.heatPump) {
+            final hasTank = newRows.any((r) {
+              final p = QgItemParser.parseLineItem(r.description);
+              return p.type == ParsedItemType.tank;
+            });
+            _quoteType = hasTank ? QuoteType.hpWithTank : QuoteType.hpOnly;
+
+            final resolved = QgModelSpecsResolver.resolve(
+              modelName: parsed.hpModel,
+              kw: parsed.hpKw?.toDouble(),
+              settings: settings,
+              heatPumpType: HeatPumpType.domesticCommercial,
+            );
+            final match = settings.models.cast<HeatPumpModel?>().firstWhere(
+              (m) =>
+                  m != null &&
+                  (m.id.toLowerCase() == resolved.modelId.toLowerCase() ||
+                      m.modelName.toLowerCase() == resolved.modelName.toLowerCase()),
+              orElse: () => null,
+            );
+            if (match != null) {
+              _selectedModel = match;
+            } else {
+              _selectedModel = HeatPumpModel(
+                id: resolved.modelId.isNotEmpty ? resolved.modelId : resolved.modelName,
+                modelName: resolved.modelName,
+                displayCapacityKw: resolved.kw,
+                specs: resolved.specs,
+              );
+            }
+            _hpQty = row.qty;
+            break;
           }
         }
       }

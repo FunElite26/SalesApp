@@ -53,7 +53,7 @@ class AssignedWorkRepository {
       final res = await _supabase
           .from('assigned_work')
           .select('*')
-          .or('assigned_to_user_id.eq.$userId,assigned_by_user_id.eq.$userId')
+          .eq('assigned_to_user_id', userId)
           .order('status', ascending: true)
           .order('priority', ascending: false);
 
@@ -63,7 +63,7 @@ class AssignedWorkRepository {
       debugPrint('AssignedWorkRepository.fetchTodayTasksForUser error: $e');
       final allLocal = await _readFromLocalCache();
       return allLocal.where((it) {
-        return it.assignedToUserId == userId || it.assignedByUserId == userId;
+        return it.assignedToUserId == userId;
       }).toList();
     }
   }
@@ -83,6 +83,26 @@ class AssignedWorkRepository {
       // Append to local cache
       final current = await _readFromLocalCache();
       await _cacheLocal([created, ...current.where((e) => e.id != created.id)]);
+
+      // Send notification for assigned work to assignee (not if self-assigned)
+      if (created.assignedToUserId.isNotEmpty && created.assignedToUserId != created.assignedByUserId) {
+        try {
+          final assigner = created.assignedByUserName.trim().isNotEmpty
+              ? created.assignedByUserName.trim()
+              : 'Team';
+          final cust = (created.customerName != null && created.customerName!.trim().isNotEmpty)
+              ? ' for ${created.customerName!.trim()}'
+              : '';
+          await _supabase.from('notifications').insert({
+            'user_id': created.assignedToUserId,
+            'title': 'New Work Assigned',
+            'body': '$assigner assigned you a task: "${created.title}"$cust.',
+            'type': 'assigned',
+          });
+        } catch (ne) {
+          debugPrint('Error inserting notification for assigned work: $ne');
+        }
+      }
 
       return created;
     } catch (e) {

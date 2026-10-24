@@ -38,9 +38,15 @@ class NotificationsNotifier
           .order('created_at', ascending: false)
           .limit(50);
 
-      final notifications = (response as List<dynamic>)
-          .map((json) => AppNotification.fromJson(json as Map<String, dynamic>))
-          .toList();
+      final seenKeys = <String>{};
+      final notifications = <AppNotification>[];
+      for (final json in (response as List<dynamic>)) {
+        final item = AppNotification.fromJson(json as Map<String, dynamic>);
+        final key = '${item.title}_${item.body}_${item.relatedPipelineId ?? ""}';
+        if (seenKeys.add(key)) {
+          notifications.add(item);
+        }
+      }
 
       if (mounted) state = AsyncValue.data(notifications);
     } catch (e, st) {
@@ -68,7 +74,12 @@ class NotificationsNotifier
 
             if (payload.eventType == PostgresChangeEvent.insert) {
               final newNotif = AppNotification.fromJson(payload.newRecord);
-              if (!current.any((n) => n.id == newNotif.id)) {
+              final isDuplicate = current.any((n) =>
+                  n.id == newNotif.id ||
+                  (n.title == newNotif.title &&
+                      n.body == newNotif.body &&
+                      n.relatedPipelineId == newNotif.relatedPipelineId));
+              if (!isDuplicate) {
                 state = AsyncValue.data([newNotif, ...current]);
               }
             } else if (payload.eventType == PostgresChangeEvent.update) {

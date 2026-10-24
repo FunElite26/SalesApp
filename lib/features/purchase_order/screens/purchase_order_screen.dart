@@ -11,6 +11,7 @@ import '../../../core/models/pipeline.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../pipelines/providers/pipelines_provider.dart';
 import '../../../core/services/pdf_service.dart';
+import '../../../core/services/notification_backend_helper.dart';
 import '../../../core/widgets/pdf_preview_screen.dart';
 import '../../../core/widgets/inventory_autocomplete.dart';
 
@@ -279,14 +280,19 @@ class _PurchaseOrderScreenState extends ConsumerState<PurchaseOrderScreen> {
             .eq('id', widget.pipelineId)
             .single();
 
-        await supabase.from('notifications').insert({
-          'user_id': (salesPipeline as Map)['created_by'],
-          'title': 'Deal Completed!',
-          'body':
-              'Material Requisition has been completed. Deal for ${_pipeline?.product?.name ?? 'product'} is now complete.',
-          'type': 'step_unlocked',
-          'related_pipeline_id': widget.pipelineId,
-        });
+        final customerName = _pipeline?.customer?.companyName ?? '';
+        final productName = _pipeline?.product?.name ?? 'product';
+        final custSuffix = customerName.isNotEmpty ? ' ($customerName)' : '';
+
+        await NotificationBackendHelper.notifyUser(
+          supabase: supabase,
+          userId: (salesPipeline as Map)['created_by'],
+          title: 'Deal Completed!',
+          body:
+              'Material Requisition has been completed. Deal for $productName$custSuffix is now complete.',
+          type: 'step_unlocked',
+          relatedPipelineId: widget.pipelineId,
+        );
       } else {
         // Audit log for update
         await supabase.from('step_audit_log').insert({

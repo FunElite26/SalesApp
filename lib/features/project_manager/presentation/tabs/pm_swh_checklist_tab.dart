@@ -26,11 +26,13 @@ class PmSwhChecklistTab extends ConsumerStatefulWidget {
 
 class _PmSwhChecklistTabState extends ConsumerState<PmSwhChecklistTab> {
   final ScrollController _hScrollCtrl = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
   @override
   void dispose() {
     _hScrollCtrl.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -71,12 +73,24 @@ class _PmSwhChecklistTabState extends ConsumerState<PmSwhChecklistTab> {
                         width: 220,
                         height: 36,
                         child: TextField(
+                          controller: _searchController,
                           onChanged: (val) => setState(() => _searchQuery = val),
                           style: TextStyle(fontSize: 13, color: pm.foreground),
                           decoration: InputDecoration(
                             hintText: 'Search checklist...',
                             hintStyle: TextStyle(fontSize: 13, color: pm.mutedForeground),
                             prefixIcon: Icon(LucideIcons.search, size: 14, color: pm.mutedForeground),
+                            suffixIcon: _searchController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(LucideIcons.x, size: 14, color: pm.mutedForeground),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() => _searchQuery = '');
+                                    },
+                                  )
+                                : null,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                             isDense: true,
                             filled: true,

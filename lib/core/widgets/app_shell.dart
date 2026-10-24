@@ -163,8 +163,9 @@ class _AppShellState extends ConsumerState<AppShell> {
       try {
         final tasks = await ref.read(todayTasksForCurrentUserProvider.future);
         if (!mounted) return;
-        // Show pop of assigned task only if there is any pending task, else don't show pop-up
+        // Show pop up of assigned work only if there is any pending task assigned TO this user
         final hasPending = tasks.any((t) =>
+            t.assignedToUserId == profile.id &&
             t.status != WorkStatus.completed &&
             t.status != WorkStatus.cancelled);
         if (hasPending) {

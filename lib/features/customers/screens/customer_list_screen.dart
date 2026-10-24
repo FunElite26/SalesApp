@@ -289,8 +289,10 @@ class _CustomerListScreenState extends ConsumerState<CustomerListScreen> {
                 constraints: const BoxConstraints(maxWidth: 800),
                 child: TextField(
                   controller: _searchController,
-                  onChanged: (value) =>
-                      ref.read(customersNotifierProvider.notifier).search(value),
+                  onChanged: (value) {
+                    ref.read(customersNotifierProvider.notifier).search(value);
+                    setState(() {});
+                  },
                   style: const TextStyle(
                     fontFamily: 'Inter',
                     color: AppColors.textPrimary,
@@ -308,6 +310,7 @@ class _CustomerListScreenState extends ConsumerState<CustomerListScreen> {
                               ref
                                   .read(customersNotifierProvider.notifier)
                                   .search('');
+                              setState(() {});
                             },
                           )
                         : null,

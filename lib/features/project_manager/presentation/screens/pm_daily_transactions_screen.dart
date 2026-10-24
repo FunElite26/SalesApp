@@ -315,6 +315,18 @@ class _PmDailyTransactionsScreenState extends ConsumerState<PmDailyTransactionsS
                                         hintText: 'Search party, firm, transaction...',
                                         hintStyle: TextStyle(color: pm.mutedForeground, fontSize: 13),
                                         prefixIcon: Icon(LucideIcons.search, size: 16, color: pm.mutedForeground),
+                                        suffixIcon: _searchController.text.isNotEmpty
+                                            ? IconButton(
+                                                icon: Icon(LucideIcons.x, size: 16, color: pm.mutedForeground),
+                                                onPressed: () {
+                                                  _searchController.clear();
+                                                  setState(() {});
+                                                  ref.read(dailyTransactionsFilterProvider.notifier).update(
+                                                        (s) => s.copyWith(searchQuery: ''),
+                                                      );
+                                                },
+                                              )
+                                            : null,
                                         isDense: true,
                                         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                         border: OutlineInputBorder(
@@ -327,6 +339,7 @@ class _PmDailyTransactionsScreenState extends ConsumerState<PmDailyTransactionsS
                                         ),
                                       ),
                                       onChanged: (val) {
+                                        setState(() {});
                                         ref.read(dailyTransactionsFilterProvider.notifier).update(
                                               (s) => s.copyWith(searchQuery: val.trim()),
                                             );

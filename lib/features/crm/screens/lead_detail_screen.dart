@@ -32,8 +32,8 @@ import '../../quotation_generator/templates/qg_template_registry.dart';
 import '../../quotation_generator/templates/boom_barrier_template.dart';
 import '../../quotation_generator/ui/screens/boom_barrier_preview_screen.dart';
 import '../../quotation_generator/models/qg_proposal_draft.dart';
-import '../../quotation_generator/models/heat_pump_model.dart';
 import '../../quotation_generator/services/qg_drafts_service.dart';
+import '../../quotation_generator/services/qg_model_specs_resolver.dart';
 import '../../../core/utils/global_click_guard.dart';
 import '../../../core/widgets/pdf_loading_dialog.dart';
 
@@ -3240,20 +3240,26 @@ class _LeadQuotationsSectionState
         final QgProposalDraft draft = (await QgDraftsService.loadDraft(quot.id)) ??
             QgProposalDraft.fromDealQuotation(dealItem, settings: settings);
 
-        // Ensure draft specs are in sync with Module Settings
-        if (settings.models.isNotEmpty) {
-          final matchedHp = settings.models.cast<HeatPumpModel?>().firstWhere(
-            (m) =>
-                m != null &&
-                (m.id.toLowerCase() == draft.hpModel.toLowerCase() ||
-                    m.modelName.toLowerCase() == draft.hpModel.toLowerCase() ||
-                    (m.displayCapacityKw - draft.hpKw).abs() < 0.1),
-            orElse: () => null,
-          );
-          if (matchedHp != null && matchedHp.specs.isNotEmpty) {
-            draft.hpSpecs = Map<String, String>.from(matchedHp.specs);
-            draft.specsCopiedFrom = 'Module Settings: ${matchedHp.modelName}';
-          }
+        // Ensure draft specs are in sync with Module Settings according to heat pump type
+        HeatPumpType hpType = HeatPumpType.domesticCommercial;
+        if (draft.specCategoryId == 'all_in_one' || draft.specCategoryId == 'wall_mounted') {
+          hpType = HeatPumpType.allInOne;
+        } else if (draft.specCategoryId == 'pool') {
+          hpType = HeatPumpType.swimmingPool;
+        }
+
+        final resSpecs = QgModelSpecsResolver.resolve(
+          modelName: draft.hpModel,
+          kw: draft.hpKw.toDouble(),
+          isWallMounted: draft.specCategoryId == 'wall_mounted',
+          heatPumpType: hpType,
+          settings: settings,
+        );
+        if (resSpecs.specs.isNotEmpty) {
+          draft.hpSpecs = Map<String, String>.from(resSpecs.specs);
+          draft.hpModel = resSpecs.modelName;
+          if (resSpecs.kw > 0) draft.hpKw = resSpecs.kw.round();
+          draft.specsCopiedFrom = resSpecs.specsCopiedFrom;
         }
         await QgDraftsService.saveDraft(draft);
 

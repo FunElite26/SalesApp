@@ -151,7 +151,14 @@ class _CustomerSearchModal extends ConsumerStatefulWidget {
 }
 
 class _CustomerSearchModalState extends ConsumerState<_CustomerSearchModal> {
+  final TextEditingController _searchController = TextEditingController();
   String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -190,6 +197,7 @@ class _CustomerSearchModalState extends ConsumerState<_CustomerSearchModal> {
               const SizedBox(height: 12),
               // Search input
               TextField(
+                controller: _searchController,
                 autofocus: true,
                 onChanged: (val) {
                   setState(() => _query = val.trim());
@@ -198,6 +206,16 @@ class _CustomerSearchModalState extends ConsumerState<_CustomerSearchModal> {
                 style: TextStyle(fontSize: 14, color: pm.foreground),
                 decoration: InputDecoration(
                   prefixIcon: const Icon(LucideIcons.search, size: 16),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(LucideIcons.x, size: 16),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                            ref.read(customersNotifierProvider.notifier).search('');
+                          },
+                        )
+                      : null,
                   hintText: 'Search customer name, contact, phone...',
                   hintStyle: TextStyle(color: pm.mutedForeground, fontSize: 13),
                   isDense: true,

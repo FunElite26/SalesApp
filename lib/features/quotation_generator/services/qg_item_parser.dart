@@ -41,6 +41,7 @@ class ParsedItemResult {
   final int? poolKw;
 
   // Metadata from deal line
+  final String? modelId;
   final int qty;
   final double rate;
   final double amount;
@@ -64,6 +65,7 @@ class ParsedItemResult {
     this.aioCapacityLitres,
     this.poolModel,
     this.poolKw,
+    this.modelId,
     this.qty = 1,
     this.rate = 0.0,
     this.amount = 0.0,
@@ -89,6 +91,7 @@ class ParsedItemResult {
     int? aioCapacityLitres,
     String? poolModel,
     int? poolKw,
+    String? modelId,
     int? qty,
     double? rate,
     double? amount,
@@ -112,6 +115,7 @@ class ParsedItemResult {
       aioCapacityLitres: aioCapacityLitres ?? this.aioCapacityLitres,
       poolModel: poolModel ?? this.poolModel,
       poolKw: poolKw ?? this.poolKw,
+      modelId: modelId ?? this.modelId,
       qty: qty ?? this.qty,
       rate: rate ?? this.rate,
       amount: amount ?? this.amount,
@@ -197,6 +201,7 @@ class QgItemParser {
     String? uom,
     bool isExtra = false,
     bool isIncluded = false,
+    String? modelId,
   }) {
     final text = description.trim();
     final lower = text.toLowerCase();
@@ -220,6 +225,7 @@ class QgItemParser {
         uom: uom ?? 'SET',
         isExtra: isExtra,
         isIncluded: isIncluded,
+        modelId: modelId,
       );
     }
 
@@ -245,6 +251,7 @@ class QgItemParser {
         uom: uom ?? 'SET',
         isExtra: isExtra,
         isIncluded: isIncluded,
+        modelId: modelId,
       );
     }
 
@@ -305,6 +312,7 @@ class QgItemParser {
             uom: uom ?? 'NOS',
             isExtra: isExtra,
             isIncluded: isIncluded,
+            modelId: modelId,
           );
         }
       }
@@ -335,6 +343,7 @@ class QgItemParser {
           uom: uom ?? 'SET',
           isExtra: isExtra,
           isIncluded: isIncluded,
+          modelId: modelId,
         );
       }
 
@@ -365,6 +374,7 @@ class QgItemParser {
           uom: uom ?? 'SET',
           isExtra: isExtra,
           isIncluded: isIncluded,
+          modelId: modelId,
         );
       }
 
@@ -380,6 +390,7 @@ class QgItemParser {
         uom: uom ?? 'SET',
         isExtra: isExtra,
         isIncluded: isIncluded,
+        modelId: modelId,
       );
     }
 

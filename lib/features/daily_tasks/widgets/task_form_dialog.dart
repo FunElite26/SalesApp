@@ -510,6 +510,12 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
               decoration: InputDecoration(
                 hintText: 'Search customer by name, company, or phone...',
                 prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () => _searchController.clear(),
+                      )
+                    : null,
                 contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
                 filled: true,
                 fillColor: const Color(0xFFF1F5F9),

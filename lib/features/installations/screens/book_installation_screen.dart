@@ -49,6 +49,9 @@ class _BookInstallationScreenState
   final List<String> _sitePhotosBase64 = [];
   final ImagePicker _picker = ImagePicker();
 
+  final Map<String, TextEditingController> _itemQtyControllers = {};
+  Map<String, Map<String, int>> _previousInstalledCounts = {};
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -57,7 +60,72 @@ class _BookInstallationScreenState
     _addressController.dispose();
     _sealNumberBeforeController.dispose();
     _mobileController.dispose();
+    _clearItemQtyControllers();
     super.dispose();
+  }
+
+  void _clearItemQtyControllers() {
+    for (final c in _itemQtyControllers.values) {
+      c.dispose();
+    }
+    _itemQtyControllers.clear();
+  }
+
+  void _initItemQuantities() {
+    _clearItemQtyControllers();
+    if (_selectedDeal == null) return;
+
+    final dealId = _selectedDeal!['id']?.toString() ?? '';
+    final dealPrev = _previousInstalledCounts[dealId] ?? _previousInstalledCounts['all'] ?? {};
+
+    final items = (_selectedDeal?['quotations'] as List?)?.isNotEmpty == true &&
+            (_selectedDeal?['quotations'][0]['items'] != null)
+        ? (_selectedDeal!['quotations'][0]['items'] as List)
+        : [];
+
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      final desc = (item['description'] ?? item['name'] ?? 'Item $i').toString().trim();
+      final totalQty = int.tryParse(item['qty']?.toString() ?? '1') ?? 1;
+      final prevInstalled = dealPrev[desc] ?? 0;
+      final available = (totalQty - prevInstalled).clamp(0, totalQty);
+      final defaultQty = available > 0 ? available : 0;
+      _itemQtyControllers[desc] = TextEditingController(text: defaultQty.toString());
+    }
+  }
+
+  Map<String, Map<String, int>> _parsePreviousInstalledItems(List<dynamic> installations) {
+    final Map<String, Map<String, int>> result = {};
+    for (final inst in installations) {
+      final notes = (inst['notes'] ?? '').toString();
+      if (notes.isEmpty) continue;
+
+      String? dealId;
+      final dealMatch = RegExp(r'Deal ID:\s*([a-zA-Z0-9\-]+)').firstMatch(notes);
+      if (dealMatch != null) {
+        dealId = dealMatch.group(1)?.trim();
+      }
+
+      final itemsMatch = RegExp(r'\[INSTALLED_ITEMS:\s*(\[.*?\])\s*\]').firstMatch(notes);
+      if (itemsMatch != null) {
+        try {
+          final jsonStr = itemsMatch.group(1)!;
+          final list = jsonDecode(jsonStr) as List<dynamic>;
+          for (final item in list) {
+            final desc = (item['description'] ?? item['name'] ?? '').toString().trim();
+            final qty = int.tryParse(item['qty']?.toString() ?? '0') ?? 0;
+            if (desc.isNotEmpty && qty > 0) {
+              final key = (dealId != null && dealId.isNotEmpty) ? dealId : 'all';
+              result.putIfAbsent(key, () => {});
+              result[key]![desc] = (result[key]![desc] ?? 0) + qty;
+            }
+          }
+        } catch (e) {
+          debugPrint('Error parsing installed items from notes: $e');
+        }
+      }
+    }
+    return result;
   }
 
   void _onCustomerSelected(Customer customer) async {
@@ -68,6 +136,8 @@ class _BookInstallationScreenState
       _customerCompletedDeals = [];
       _selectedDeal = null;
       _selectedProduct = null;
+      _previousInstalledCounts = {};
+      _clearItemQtyControllers();
     });
 
     final supabase = ref.read(supabaseClientProvider);
@@ -83,6 +153,13 @@ class _BookInstallationScreenState
         factory_orders(id, status),
         purchase_orders(id, status)
       ''').eq('customer_id', customer.id);
+
+      final prevInstRes = await supabase
+          .from('installations')
+          .select('id, notes, created_at')
+          .eq('customer_id', customer.id);
+
+      final prevMap = _parsePreviousInstalledItems((prevInstRes as List<dynamic>?) ?? []);
       
       if (mounted) {
         final pipelines = (res as List).map((p) => SalesPipeline.fromJson(p as Map<String, dynamic>)).toList();
@@ -99,6 +176,7 @@ class _BookInstallationScreenState
 
         setState(() {
           _customerCompletedDeals = completedDeals;
+          _previousInstalledCounts = prevMap;
         });
       }
     } catch (e) {
@@ -216,6 +294,40 @@ class _BookInstallationScreenState
       return;
     }
 
+    final List<Map<String, dynamic>> installedItemsList = [];
+    final items = (_selectedDeal?['quotations'] as List?)?.isNotEmpty == true &&
+            (_selectedDeal?['quotations'][0]['items'] != null)
+        ? (_selectedDeal!['quotations'][0]['items'] as List)
+        : [];
+
+    final dealId = _selectedDeal!['id']?.toString() ?? '';
+    final dealPrev = _previousInstalledCounts[dealId] ?? _previousInstalledCounts['all'] ?? {};
+
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      final desc = (item['description'] ?? item['name'] ?? 'Item $i').toString().trim();
+      final totalQty = int.tryParse(item['qty']?.toString() ?? '1') ?? 1;
+      final prevInstalled = dealPrev[desc] ?? 0;
+      final available = (totalQty - prevInstalled).clamp(0, totalQty);
+
+      final ctrl = _itemQtyControllers[desc];
+      final entered = int.tryParse(ctrl?.text.trim() ?? '0') ?? 0;
+      final validQty = entered.clamp(0, available);
+      if (validQty > 0) {
+        installedItemsList.add({
+          'description': desc,
+          'qty': validQty,
+        });
+      }
+    }
+
+    if (items.isNotEmpty && installedItemsList.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please specify quantity to install for at least one item.')),
+      );
+      return;
+    }
+
     String title = 'Installation for ${_selectedCustomer!.companyName}';
     if (_selectedDeal != null) {
       final prodName = _selectedDeal!['products']?['name'] ?? 'System';
@@ -230,6 +342,12 @@ class _BookInstallationScreenState
     if (_selectedDeal != null) {
       if (finalNotes.isNotEmpty) finalNotes += '\n';
       finalNotes += 'Deal ID: ${_selectedDeal!['id']}';
+    }
+    if (installedItemsList.isNotEmpty) {
+      if (finalNotes.isNotEmpty) finalNotes += '\n';
+      final humanItems = installedItemsList.map((e) => '${e['description']} (Qty: ${e['qty']})').join(', ');
+      finalNotes += 'Installed Items: $humanItems\n';
+      finalNotes += '[INSTALLED_ITEMS:${jsonEncode(installedItemsList)}]';
     }
 
     setState(() => _isSubmitting = true);
@@ -424,26 +542,11 @@ class _BookInstallationScreenState
                           onChanged: (deal) {
                             setState(() {
                               _selectedDeal = deal;
+                              _initItemQuantities();
                             });
                           },
                         ),
-                      if (_selectedDeal != null) ...[
-                        const SizedBox(height: 16),
-                        const Text('Quotation Items (from Deal)', style: TextStyle(fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 8),
-                        ...((_selectedDeal?['quotations'] as List?)?.isNotEmpty == true && (_selectedDeal?['quotations'][0]['items'] != null)
-                            ? ((_selectedDeal!['quotations'][0]['items'] as List).map((item) {
-                                final desc = item['description'] ?? 'Item';
-                                final qty = item['qty']?.toString() ?? '1';
-                                return ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  title: Text(desc.toString(), style: const TextStyle(fontSize: 14)),
-                                  trailing: Text('Qty: $qty', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                );
-                              }).toList())
-                            : [const Text('No items found in quotation.', style: TextStyle(color: Colors.grey, fontSize: 13))]),
-                      ],
+                      _buildQuotationItemsSection(),
                     ],
                   ),
                 ),
@@ -765,6 +868,310 @@ class _BookInstallationScreenState
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuotationItemsSection() {
+    if (_selectedDeal == null) return const SizedBox.shrink();
+
+    final items = (_selectedDeal?['quotations'] as List?)?.isNotEmpty == true &&
+            (_selectedDeal?['quotations'][0]['items'] != null)
+        ? (_selectedDeal!['quotations'][0]['items'] as List)
+        : [];
+
+    if (items.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text('No items found in quotation.', style: TextStyle(color: Colors.grey, fontSize: 13)),
+      );
+    }
+
+    final dealId = _selectedDeal!['id']?.toString() ?? '';
+    final dealPrev = _previousInstalledCounts[dealId] ?? _previousInstalledCounts['all'] ?? {};
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Quotation Items (from Deal)',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                color: Color(0xFF1E293B),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '${items.length} items',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ...List.generate(items.length, (idx) {
+          final item = items[idx];
+          final desc = (item['description'] ?? item['name'] ?? 'Item $idx').toString().trim();
+          final totalQty = int.tryParse(item['qty']?.toString() ?? '1') ?? 1;
+          final prevInstalled = dealPrev[desc] ?? 0;
+          final isSubsequentSchedule = prevInstalled > 0;
+          final availableQty = (totalQty - prevInstalled).clamp(0, totalQty);
+
+          final ctrl = _itemQtyControllers.putIfAbsent(desc, () {
+            final def = availableQty > 0 ? availableQty : 0;
+            return TextEditingController(text: def.toString());
+          });
+
+          final enteredQty = int.tryParse(ctrl.text.trim()) ?? 0;
+          final currentInstalling = enteredQty.clamp(0, availableQty);
+          final remainingQty = (availableQty - currentInstalling).clamp(0, availableQty);
+          final isFullyInstalled = availableQty == 0;
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: isFullyInstalled ? const Color(0xFFF8FAFC) : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isFullyInstalled ? const Color(0xFFE2E8F0) : const Color(0xFFCBD5E1),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.02),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Item header: Title + Status
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isFullyInstalled
+                            ? const Color(0xFFE2E8F0)
+                            : const Color(0xFF0284C7).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.inventory_2_outlined,
+                        size: 18,
+                        color: isFullyInstalled ? const Color(0xFF64748B) : const Color(0xFF0284C7),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            desc,
+                            style: TextStyle(
+                              fontFamily: 'Inter',
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: isFullyInstalled ? const Color(0xFF64748B) : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          // Quantities stats badges
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              _buildQtyBadge(
+                                label: 'Total Qty: $totalQty',
+                                bgColor: const Color(0xFFF1F5F9),
+                                textColor: const Color(0xFF475569),
+                              ),
+                              if (isSubsequentSchedule) ...[
+                                _buildQtyBadge(
+                                  label: 'Installed: $prevInstalled',
+                                  bgColor: const Color(0xFFEEF2FF),
+                                  textColor: const Color(0xFF4F46E5),
+                                ),
+                                _buildQtyBadge(
+                                  label: 'Available: $availableQty',
+                                  bgColor: isFullyInstalled ? const Color(0xFFF1F5F9) : const Color(0xFFECFDF5),
+                                  textColor: isFullyInstalled ? const Color(0xFF94A3B8) : const Color(0xFF059669),
+                                ),
+                              ],
+                              if (isFullyInstalled)
+                                _buildQtyBadge(
+                                  label: '✓ Fully Installed',
+                                  bgColor: const Color(0xFFECFDF5),
+                                  textColor: const Color(0xFF047857),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                const SizedBox(height: 12),
+
+                // Interactive Installing Now & Auto-Calculated Remaining
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Installing Quantity Selector
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Installing Now',
+                          style: TextStyle(
+                            fontFamily: 'Inter',
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: isFullyInstalled ? Colors.grey : const Color(0xFF334155),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        if (isFullyInstalled)
+                          const Text('0', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.grey))
+                        else
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFCBD5E1)),
+                              color: const Color(0xFFF8FAFC),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.remove, size: 16),
+                                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: currentInstalling > 0
+                                      ? () {
+                                          setState(() {
+                                            ctrl.text = (currentInstalling - 1).toString();
+                                          });
+                                        }
+                                      : null,
+                                ),
+                                SizedBox(
+                                  width: 44,
+                                  child: TextField(
+                                    controller: ctrl,
+                                    keyboardType: TextInputType.number,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.symmetric(vertical: 6),
+                                    ),
+                                    onChanged: (val) {
+                                      setState(() {});
+                                    },
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.add, size: 16),
+                                  constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: currentInstalling < availableQty
+                                      ? () {
+                                          setState(() {
+                                            ctrl.text = (currentInstalling + 1).toString();
+                                          });
+                                        }
+                                      : null,
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    // Remaining Quantity display (Auto Calculate)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: remainingQty == 0
+                            ? const Color(0xFFECFDF5)
+                            : const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: remainingQty == 0
+                              ? const Color(0xFFA7F3D0)
+                              : const Color(0xFFFDE68A),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Remaining Qty',
+                            style: TextStyle(
+                              fontFamily: 'Inter',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: remainingQty == 0 ? const Color(0xFF047857) : const Color(0xFFB45309),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '$remainingQty',
+                            style: TextStyle(
+                              fontFamily: 'Inter',
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: remainingQty == 0 ? const Color(0xFF047857) : const Color(0xFFB45309),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildQtyBadge({required String label, required Color bgColor, required Color textColor}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: textColor,
         ),
       ),
     );

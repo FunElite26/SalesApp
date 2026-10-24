@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../auth/providers/auth_provider.dart';
 import '../../models/assigned_work_item.dart';
 import '../../providers/assigned_work_providers.dart';
 import 'add_edit_work_dialog.dart';
@@ -96,7 +97,11 @@ class TodayTasksDialog extends ConsumerWidget {
             // Content
             Expanded(
               child: todayTasksAsync.when(
-                data: (tasks) {
+                data: (rawTasks) {
+                  final profile = ref.watch(currentProfileProvider);
+                  final tasks = profile != null
+                      ? rawTasks.where((t) => t.assignedToUserId == profile.id).toList()
+                      : rawTasks;
                   if (tasks.isEmpty) {
                     return Center(
                       child: Padding(

@@ -44,6 +44,7 @@ class _DailyTasksScreenState extends ConsumerState<DailyTasksScreen> {
           (state) => state.copyWith(searchQuery: _searchController.text),
         );
     ref.read(dailyTasksProvider.notifier).loadTasks();
+    if (mounted) setState(() {});
   }
 
   @override
@@ -688,7 +689,10 @@ class _DailyTasksScreenState extends ConsumerState<DailyTasksScreen> {
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 16),
-                        onPressed: () => _searchController.clear(),
+                        onPressed: () {
+                          _searchController.clear();
+                          if (mounted) setState(() {});
+                        },
                       )
                     : null,
                 contentPadding: const EdgeInsets.symmetric(vertical: 10),

@@ -15,6 +15,7 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../pipelines/providers/pipelines_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/services/pdf_service.dart';
+import '../../../core/services/notification_backend_helper.dart';
 import '../../../core/widgets/pdf_preview_screen.dart';
 
 class SalesOrderFormScreen extends ConsumerStatefulWidget {
@@ -445,13 +446,17 @@ class _SalesOrderFormScreenState extends ConsumerState<SalesOrderFormScreen> {
       });
 
       // Notification
-      await supabase.from('notifications').insert({
-        'user_id': supabase.auth.currentUser!.id,
-        'title': 'BOQ Stage Unlocked',
-        'body': 'Sales Order confirmed. BOQ step is now available.',
-        'type': 'step_unlocked',
-        'related_pipeline_id': widget.pipelineId,
-      });
+      final custName = _pipeline?.customer?.companyName ?? '';
+      final prodName = _product?.name ?? _pipeline?.product?.name ?? 'deal';
+      final custSuffix = custName.isNotEmpty ? ' for $custName ($prodName)' : '';
+      await NotificationBackendHelper.notifyUser(
+        supabase: supabase,
+        userId: supabase.auth.currentUser!.id,
+        title: 'BOQ Stage Unlocked',
+        body: 'Sales Order confirmed$custSuffix. BOQ step is now available.',
+        type: 'step_unlocked',
+        relatedPipelineId: widget.pipelineId,
+      );
 
       // Prompt to choose variant for layout print
       if (mounted) {

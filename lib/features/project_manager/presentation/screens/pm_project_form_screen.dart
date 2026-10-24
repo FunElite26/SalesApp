@@ -273,6 +273,7 @@ class _PmProjectFormScreenState extends ConsumerState<PmProjectFormScreen> {
       context: context,
       builder: (ctx) {
         String searchQuery = '';
+        final searchController = TextEditingController();
         return StatefulBuilder(
           builder: (context, setModalState) {
             final filtered = inventoryItems.where((item) {
@@ -309,9 +310,19 @@ class _PmProjectFormScreenState extends ConsumerState<PmProjectFormScreen> {
                   ),
                   const SizedBox(height: 12),
                   TextField(
+                    controller: searchController,
                     decoration: InputDecoration(
                       hintText: 'Search inventory items...',
                       prefixIcon: const Icon(LucideIcons.search, size: 18),
+                      suffixIcon: searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(LucideIcons.x, size: 16),
+                              onPressed: () {
+                                searchController.clear();
+                                setModalState(() => searchQuery = '');
+                              },
+                            )
+                          : null,
                       isDense: true,
                       filled: true,
                       fillColor: const Color(0xFFF8FAFC),
@@ -400,6 +411,7 @@ class _PmProjectFormScreenState extends ConsumerState<PmProjectFormScreen> {
       context: context,
       builder: (ctx) {
         String searchQuery = '';
+        final searchController = TextEditingController();
         return StatefulBuilder(
           builder: (context, setModalState) {
             final filtered = staffList.where((staff) {
@@ -437,9 +449,19 @@ class _PmProjectFormScreenState extends ConsumerState<PmProjectFormScreen> {
                   ),
                   const SizedBox(height: 12),
                   TextField(
+                    controller: searchController,
                     decoration: InputDecoration(
                       hintText: 'Search by employee name...',
                       prefixIcon: const Icon(LucideIcons.search, size: 18),
+                      suffixIcon: searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(LucideIcons.x, size: 16),
+                              onPressed: () {
+                                searchController.clear();
+                                setModalState(() => searchQuery = '');
+                              },
+                            )
+                          : null,
                       isDense: true,
                       filled: true,
                       fillColor: const Color(0xFFF8FAFC),

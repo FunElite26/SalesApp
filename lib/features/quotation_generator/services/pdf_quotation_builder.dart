@@ -24,6 +24,7 @@ import '../models/heat_pump_model.dart';
 import '../data/quotation_supabase_repository.dart';
 import 'price_calculator.dart';
 import 'qg_payment_sentence_builder.dart';
+import 'qg_model_specs_resolver.dart';
 
 class PdfQuotationBuilder {
   static Future<Uint8List> buildQuotationPdf(
@@ -89,16 +90,18 @@ class PdfQuotationBuilder {
     }
 
     HeatPumpModel resolvedHp = quotation.model;
-    final matchedHp = effectiveSettings.models.cast<HeatPumpModel?>().firstWhere(
-      (m) => m != null && (m.id.toLowerCase() == resolvedHp.id.toLowerCase() ||
-             m.modelName.toLowerCase() == resolvedHp.modelName.toLowerCase() ||
-             (m.displayCapacityKw - resolvedHp.displayCapacityKw).abs() < 0.1),
-      orElse: () => null,
+    final resHpSpecs = QgModelSpecsResolver.resolve(
+      modelId: resolvedHp.id,
+      modelName: resolvedHp.modelName,
+      kw: resolvedHp.displayCapacityKw,
+      settings: effectiveSettings,
     );
-    if (matchedHp != null && matchedHp.specs.isNotEmpty) {
-      resolvedHp = matchedHp.copyWith(
-        displayCapacityKw: quotation.model.displayCapacityKw > 0 ? quotation.model.displayCapacityKw : matchedHp.displayCapacityKw,
-        specs: Map<String, String>.from(matchedHp.specs),
+    if (resHpSpecs.specs.isNotEmpty) {
+      resolvedHp = resolvedHp.copyWith(
+        id: resHpSpecs.modelId.isNotEmpty ? resHpSpecs.modelId : resolvedHp.id,
+        modelName: resHpSpecs.modelName.isNotEmpty ? resHpSpecs.modelName : resolvedHp.modelName,
+        displayCapacityKw: resHpSpecs.kw > 0 ? resHpSpecs.kw : resolvedHp.displayCapacityKw,
+        specs: Map<String, String>.from(resHpSpecs.specs),
       );
     }
 
@@ -2511,35 +2514,33 @@ class PdfQuotationBuilder {
 
     // Resolve specs for single heat pump model from q.model or directly from settings module
     Map<String, String> activeSpecs = Map.from(q.model.specs);
-    final targetName = q.model.modelName.trim().toLowerCase();
-    final match = settings.models.cast<HeatPumpModel?>().firstWhere(
-      (m) =>
-          m != null &&
-          ((targetName.isNotEmpty && m.modelName.trim().toLowerCase() == targetName) ||
-              (q.model.id.isNotEmpty && m.id.toLowerCase() == q.model.id.toLowerCase()) ||
-              (m.displayCapacityKw - q.model.displayCapacityKw).abs() < 0.1),
-      orElse: () => null,
-    );
-    if (match != null && match.specs.isNotEmpty) {
-      activeSpecs = Map.from(match.specs);
-    } else if (activeSpecs.isEmpty) {
-      debugPrint('[PdfQuotationBuilder] Using fallback default specs for ${q.model.modelName} - no Module Settings found');
+    if (activeSpecs.isEmpty) {
+      final res = QgModelSpecsResolver.resolve(
+        modelId: q.model.id,
+        modelName: q.model.modelName,
+        kw: q.model.displayCapacityKw,
+        settings: settings,
+      );
+      if (res.specs.isNotEmpty) {
+        activeSpecs = Map.from(res.specs);
+      }
     }
 
     // Resolve each HeatPumpLineItem's specs from Module Settings if missing
     final List<HeatPumpLineItem> resolvedHpList = hpList.map<HeatPumpLineItem>((h) {
       if (h.specs.isNotEmpty) return h;
-      final lineTargetName = h.modelName.trim().toLowerCase();
-      final lineMatch = settings.models.cast<HeatPumpModel?>().firstWhere(
-        (m) =>
-            m != null &&
-            ((lineTargetName.isNotEmpty && m.modelName.trim().toLowerCase() == lineTargetName) ||
-                (h.id.isNotEmpty && m.id.toLowerCase() == h.id.toLowerCase()) ||
-                (m.displayCapacityKw - h.kw).abs() < 0.1),
-        orElse: () => null,
+      final resItem = QgModelSpecsResolver.resolve(
+        modelId: h.id,
+        modelName: h.modelName,
+        kw: h.kw,
+        settings: settings,
       );
-      if (lineMatch != null && lineMatch.specs.isNotEmpty) {
-        return h.copyWith(specs: Map<String, String>.from(lineMatch.specs));
+      if (resItem.specs.isNotEmpty) {
+        return h.copyWith(
+          modelName: resItem.modelName.isNotEmpty ? resItem.modelName : h.modelName,
+          kw: resItem.kw > 0 ? resItem.kw : h.kw,
+          specs: Map<String, String>.from(resItem.specs),
+        );
       }
       return h;
     }).toList();
@@ -2586,7 +2587,7 @@ class PdfQuotationBuilder {
             _tc(sl, center: true),
             _tc(key),
             ...resolvedHpList.map((HeatPumpLineItem h) {
-              String val = h.specs[key] ?? activeSpecs[key] ?? '-';
+              String val = h.specs[key] ?? '-';
               if (key.toLowerCase().contains('capacity in litre') ||
                   key.toLowerCase().contains('capacity in ltr')) {
                 val = tankCap;

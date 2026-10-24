@@ -12,6 +12,8 @@ class LineItem {
   final double unitPrice; // item_rate
   final double discPercent;
   final double total; // amount
+  final String? modelId;
+  final String? productId;
 
   const LineItem({
     required this.description,
@@ -23,6 +25,8 @@ class LineItem {
     required this.unitPrice,
     this.discPercent = 0,
     required this.total,
+    this.modelId,
+    this.productId,
   });
 
   factory LineItem.fromJson(Map<String, dynamic> json) {
@@ -40,6 +44,8 @@ class LineItem {
       unitPrice: rate,
       discPercent: disc,
       total: (json['total'] as num? ?? json['amount'] as num? ?? defaultTotal).toDouble(),
+      modelId: json['model_id'] as String? ?? json['modelId'] as String?,
+      productId: json['product_id'] as String? ?? json['productId'] as String?,
     );
   }
 
@@ -53,6 +59,8 @@ class LineItem {
     'unit_price': unitPrice,
     'disc_percent': discPercent,
     'total': total,
+    if (modelId != null) 'model_id': modelId,
+    if (productId != null) 'product_id': productId,
   };
 
   LineItem copyWith({
@@ -64,6 +72,8 @@ class LineItem {
     String? uom,
     double? unitPrice,
     double? discPercent,
+    String? modelId,
+    String? productId,
   }) {
     final newQty = qty ?? this.qty;
     final newPrice = unitPrice ?? this.unitPrice;
@@ -78,6 +88,8 @@ class LineItem {
       unitPrice: newPrice,
       discPercent: newDisc,
       total: newQty * newPrice * (1 - newDisc / 100),
+      modelId: modelId ?? this.modelId,
+      productId: productId ?? this.productId,
     );
   }
 }

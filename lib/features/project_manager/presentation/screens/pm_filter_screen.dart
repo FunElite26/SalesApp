@@ -254,6 +254,15 @@ class _PmFilterScreenState extends ConsumerState<PmFilterScreen> {
                           decoration: InputDecoration(
                             labelText: 'Quick Search (Name, Party, Mobile)',
                             prefixIcon: const Icon(LucideIcons.search, size: 16),
+                            suffixIcon: _searchCtrl.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(LucideIcons.x, size: 16),
+                                    onPressed: () {
+                                      _searchCtrl.clear();
+                                      setState(() {});
+                                    },
+                                  )
+                                : null,
                             isDense: true,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(pm.radiusMd)),
                           ),

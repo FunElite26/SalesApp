@@ -223,8 +223,8 @@ final todayTasksForCurrentUserProvider = FutureProvider<List<AssignedWorkItem>>(
   final rawList = await repo.fetchTodayTasksForUser(currentProfile.id);
   // Map tasks for today so any uncompleted past tasks move to today
   final mapped = mapTasksForDate(rawList, DateTime.now());
-  // Show active tasks for today (not traces), sorted: pending by priority on top, completed at bottom
-  final activeTasks = mapped.where((t) => !t.isTrace).toList();
+  // Show active tasks for today (not traces) assigned strictly to current user
+  final activeTasks = mapped.where((t) => !t.isTrace && t.assignedToUserId == currentProfile.id).toList();
   return sortTasksByPriorityAndStatus(activeTasks);
 });
 
